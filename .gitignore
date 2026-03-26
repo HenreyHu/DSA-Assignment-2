@@ -30,3 +30,29 @@
 *.exe
 *.out
 *.app
+
+# Build files
+build/
+bin/
+*.o
+*.obj
+*.out
+*.exe
+simplify
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.user
+
+# Test outputs
+output.csv
+*.txt

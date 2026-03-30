@@ -1,5 +1,50 @@
 #include "structures.h"
 
+// ============================================================
+// Global Variables
+// Contributor: CHU EN HUI VERA 2402441 chu.e@digipen.edu
+// ============================================================
+vector<Vertex*> g_all_vertices;
+vector<Vertex*> g_ring_heads;
+vector<int> g_ring_sizes;
+int g_total_verts = 0;
+int g_next_uid = 0;
+SpatialGrid g_grid;
+priority_queue<Candidate, vector<Candidate>, greater<Candidate>> g_pq;
+vector<vector<pair<double, double>>> g_orig_rings;
+
+// ============================================================
+// Helper Functions
+// Contributor: CHU EN HUI VERA 2402441 chu.e@digipen.edu
+// ============================================================
+Vertex* makeVertex(double x, double y, int ring_id) {
+    Vertex* v = new Vertex(x, y, ring_id, g_next_uid++);
+    g_all_vertices.push_back(v);
+    return v;
+}
+
+double ringSignedArea(Vertex* head) {
+    if (!head) return 0;
+    double area = 0;
+    Vertex* v = head;
+    do {
+        area += v->x * v->next->y - v->next->x * v->y;
+        v = v->next;
+    } while (v != head);
+    return 0.5 * area;
+}
+
+double polySignedArea(const vector<pair<double, double>>& pts) {
+    double area = 0;
+    int n = pts.size();
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        area += pts[i].first * pts[j].second - pts[j].first * pts[i].second;
+    }
+    return 0.5 * area;
+}
+
+
 double cross2d(double ax, double ay, double bx, double by) {
     return ax * by - ay * bx;
 }
@@ -53,7 +98,6 @@ bool lineLineIntersect(double x1, double y1, double x2, double y2,
     iy = y1 + t * (y2 - y1);
     return true;
 }
-
 
 int main() {
     std::cout << "HELLO WORLD\n";

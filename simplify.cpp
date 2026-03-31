@@ -103,3 +103,224 @@ int main() {
     std::cout << "HELLO WORLD\n";
     return 0;
 }
+
+// ============================================================
+// Part 4: APSC Algorithm Core
+// Contributor: [CHUA JIA LIANG JOEL 2403273 c.jialiang@digipen.edu ]
+// ============================================================
+
+// APSC Placement (Kronenfeld et al. 2020)
+bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
+    double& ex, double& ey, double& displacement) {
+    double xA = A->x, yA = A->y;
+    double xB = B->x, yB = B->y;
+    double xC = C->x, yC = C->y;
+    double xD = D->x, yD = D->y;
+
+    // Line E: ax + by + c = 0 (parallel to AD)
+    double a = yD - yA;
+    double b = xA - xD;
+    double c = -yB * xA + (yA - yC) * xB + (yB - yD) * xC + yC * xD;
+
+    double len_AD = sqrt(a * a + b * b);
+    if (len_AD < EPS) return false;
+
+    double side_B = a * xB + b * yB;
+    double side_C = a * xC + b * yC;
+
+    if (fabs(side_B) < EPS && fabs(side_C) < EPS) {
+        ex = 0.5 * (xB + xC);
+        ey = 0.5 * (yB + yC);
+        displacement = 0;
+        return true;
+    }
+
+    bool use_AB;
+    if (side_B * side_C > EPS) {
+        use_AB = (fabs(side_B) >= fabs(side_C) - EPS);
+    }
+    else {
+        use_AB = (side_B * (-c) >= -EPS);
+    }
+
+    if (use_AB) {
+        if (!lineLineIntersect(xA, yA, xB, yB, a, b, c, ex, ey)) {
+            ex = 0.5 * (xB + xC);
+            ey = 0.5 * (yB + yC);
+        }
+    }
+    else {
+        if (!lineLineIntersect(xC, yC, xD, yD, a, b, c, ex, ey)) {
+            ex = 0.5 * (xB + xC);
+            ey = 0.5 * (yB + yC);
+        }
+    }
+
+    // Compute displacement
+    double ix, iy;
+    if (use_AB) {
+        if (segmentIntersection(ex, ey, xD, yD, xB, yB, xC, yC, ix, iy)) {
+            double a1 = fabs(signedTriArea(ex, ey, xB, yB, ix, iy));
+            double a2 = fabs(signedTriArea(ix, iy, xC, yC, xD, yD));
+            displacement = a1 + a2;
+        }
+        else {
+            double area = signedTriArea(ex, ey, xB, yB, xC, yC) +
+                signedTriArea(ex, ey, xC, yC, xD, yD);
+            displacement = fabs(area);
+        }
+    }
+    else {
+        if (segmentIntersection(xA, yA, ex, ey, xB, yB, xC, yC, ix, iy)) {
+            double a1 = fabs(signedTriArea(xA, yA, xB, yB, ix, iy));
+            double a2 = fabs(signedTriArea(ix, iy, xC, yC, ex, ey));
+            displacement = a1 + a2;
+        }
+        else {
+            double area = signedTriArea(xA, yA, xB, yB, xC, yC) +
+                signedTriArea(xA, yA, xC, yC, ex, ey);
+            displacement = fabs(area);
+        }
+    }
+
+    return true;
+}
+
+// Candidate management
+void pushCandidate(Vertex* B) {
+    if (!B || !B->valid) return;
+    if (g_ring_sizes[B->ring_id] < 4) return;
+
+    Vertex* A = B->prev;
+    Vertex* C = B->next;
+    Vertex* D = C->next;
+
+    if (!A->valid || !C->valid || !D->valid) return;
+
+    double ex, ey, disp;
+    if (!computePlacement(A, B, C, D, ex, ey, disp)) return;
+
+    Candidate cand;
+    cand.B = B;
+    cand.ex = ex;
+    cand.ey = ey;
+    cand.displacement = disp;
+    g_pq.push(cand);
+}
+
+bool isValidCandidate(const Candidate& c) {
+    if (!c.B->valid) return false;
+    if (g_ring_sizes[c.B->ring_id] < 4) return false;
+
+    Vertex* A = c.B->prev;
+    Vertex* C = c.B->next;
+    Vertex* D = C->next;
+
+    if (!A->valid || !C->valid || !D->valid) return false;
+
+    double ex, ey, disp;
+    if (!computePlacement(A, c.B, C, D, ex, ey, disp)) return false;
+    if (fabs(ex - c.ex) > EPS || fabs(ey - c.ey) > EPS) return false;
+
+    return true;
+}
+
+// Topology check
+bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey) {
+    auto makeKey = [](int u1, int u2) -> long long {
+        if (u1 > u2) swap(u1, u2);
+        return ((long long)u1 << 20) | u2;
+        };
+
+    // Edges to exclude from checking
+    long long excl1 = makeKey(A->uid, B->uid);
+    long long excl2 = makeKey(B->uid, C->uid);
+    long long excl3 = makeKey(C->uid, D->uid);
+
+    auto checkSeg = [&](double x1, double y1, double x2, double y2) -> bool {
+        vector<long long> cells;
+        g_grid.cellsForSegment(x1, y1, x2, y2, cells);
+
+        for (long long k : cells) {
+            auto it = g_grid.buckets.find(k);
+            if (it == g_grid.buckets.end()) continue;
+
+            for (auto& edge : it->second) {
+                Vertex* u = edge.first;
+                Vertex* v = edge.second;
+                if (!u->valid || !v->valid) continue;
+
+                long long key = makeKey(u->uid, v->uid);
+                if (key == excl1 || key == excl2 || key == excl3) continue;
+
+                if (segmentsCross(x1, y1, x2, y2, u->x, u->y, v->x, v->y))
+                    return false;
+            }
+        }
+        return true;
+        };
+
+    if (!checkSeg(A->x, A->y, ex, ey)) return false;
+    if (!checkSeg(ex, ey, D->x, D->y)) return false;
+    return true;
+}
+
+// Perform collapse
+double performCollapse(const Candidate& c) {
+    Vertex* B = c.B;
+    Vertex* A = B->prev;
+    Vertex* C = B->next;
+    Vertex* D = C->next;
+    int ring_id = B->ring_id;
+
+    Vertex* E = makeVertex(c.ex, c.ey, ring_id);
+
+    A->next = E;
+    E->prev = A;
+    E->next = D;
+    D->prev = E;
+
+    B->valid = false;
+    C->valid = false;
+
+    if (g_ring_heads[ring_id] == B || g_ring_heads[ring_id] == C)
+        g_ring_heads[ring_id] = E;
+
+    g_ring_sizes[ring_id]--;
+    g_total_verts--;
+
+    g_grid.addEdge(A, E);
+    g_grid.addEdge(E, D);
+
+    if (g_ring_sizes[ring_id] >= 4) {
+        pushCandidate(A->prev);
+        pushCandidate(A);
+        pushCandidate(E);
+        pushCandidate(D);
+    }
+
+    return c.displacement;
+}
+
+// Main simplification loop
+double runSimplification(int target) {
+    double total_disp = 0;
+
+    while (g_total_verts > target && !g_pq.empty()) {
+        Candidate c = g_pq.top();
+        g_pq.pop();
+
+        if (!isValidCandidate(c)) continue;
+
+        Vertex* A = c.B->prev;
+        Vertex* C = c.B->next;
+        Vertex* D = C->next;
+
+        if (!topologyOK(A, c.B, C, D, c.ex, c.ey)) continue;
+
+        total_disp += performCollapse(c);
+    }
+
+    return total_disp;
+}
+

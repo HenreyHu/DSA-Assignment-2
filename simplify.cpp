@@ -324,3 +324,153 @@ double runSimplification(int target) {
     return total_disp;
 }
 
+// ============================================================
+// Part 5: Input/Output and Main
+// Contributor: [ANANTHAN ELANGOVAN 2403536 ananthan.e@digipen.edu ]
+// ============================================================
+
+void readInput(const string& filename) {
+    ifstream fin(filename);
+    if (!fin) {
+        cerr << "Error: Cannot open " << filename << endl;
+        exit(1);
+    }
+
+    string line;
+    getline(fin, line);  // Skip header
+
+    unordered_map<int, vector<tuple<int, double, double>>> ring_data;
+    int max_ring_id = -1;
+
+    while (getline(fin, line)) {
+        if (line.empty()) continue;
+        if (line.back() == '\r') line.pop_back();
+
+        stringstream ss(line);
+        string token;
+
+        getline(ss, token, ','); int ring_id = stoi(token);
+        getline(ss, token, ','); int vertex_id = stoi(token);
+        getline(ss, token, ','); double x = stod(token);
+        getline(ss, token, ','); double y = stod(token);
+
+        ring_data[ring_id].push_back({ vertex_id, x, y });
+        max_ring_id = max(max_ring_id, ring_id);
+    }
+
+    for (auto& p : ring_data)
+        sort(p.second.begin(), p.second.end());
+
+    int num_rings = max_ring_id + 1;
+    g_ring_heads.resize(num_rings, nullptr);
+    g_ring_sizes.resize(num_rings, 0);
+    g_orig_rings.resize(num_rings);
+
+    double min_x = 1e18, min_y = 1e18, max_x = -1e18, max_y = -1e18;
+
+    for (int r = 0; r < num_rings; r++) {
+        auto& verts = ring_data[r];
+        int n = verts.size();
+        if (n == 0) continue;
+
+        vector<Vertex*> ring_verts;
+        for (auto& v : verts) {
+            double x = get<1>(v), y = get<2>(v);
+            ring_verts.push_back(makeVertex(x, y, r));
+            g_orig_rings[r].push_back({ x, y });
+            min_x = min(min_x, x); min_y = min(min_y, y);
+            max_x = max(max_x, x); max_y = max(max_y, y);
+        }
+
+        for (int i = 0; i < n; i++) {
+            ring_verts[i]->next = ring_verts[(i + 1) % n];
+            ring_verts[i]->prev = ring_verts[(i - 1 + n) % n];
+        }
+
+        g_ring_heads[r] = ring_verts[0];
+        g_ring_sizes[r] = n;
+        g_total_verts += n;
+    }
+
+    // Init spatial grid
+    double range = max(max_x - min_x, max_y - min_y);
+    int cells = max(1, (int)sqrt((double)g_total_verts));
+    g_grid.min_x = min_x;
+    g_grid.min_y = min_y;
+    g_grid.cell_size = range / cells + 1.0;
+
+    for (int r = 0; r < num_rings; r++) {
+        Vertex* head = g_ring_heads[r];
+        if (!head) continue;
+        Vertex* v = head;
+        do {
+            g_grid.addEdge(v, v->next);
+            v = v->next;
+        } while (v != head);
+    }
+
+    // Init priority queue
+    for (int r = 0; r < num_rings; r++) {
+        Vertex* head = g_ring_heads[r];
+        if (!head || g_ring_sizes[r] < 4) continue;
+        Vertex* v = head;
+        do {
+            pushCandidate(v);
+            v = v->next;
+        } while (v != head);
+    }
+}
+
+void writeOutput(double total_disp) {
+    double input_area = 0;
+    for (size_t r = 0; r < g_orig_rings.size(); r++)
+        input_area += polySignedArea(g_orig_rings[r]);
+
+    double output_area = 0;
+    for (size_t r = 0; r < g_ring_heads.size(); r++)
+        output_area += ringSignedArea(g_ring_heads[r]);
+
+    cout << "ring_id,vertex_id,x,y" << endl;
+
+    for (size_t r = 0; r < g_ring_heads.size(); r++) {
+        Vertex* head = g_ring_heads[r];
+        if (!head) continue;
+
+        int vid = 0;
+        Vertex* v = head;
+        do {
+            cout << r << "," << vid << ",";
+            if (fabs(v->x - round(v->x)) < 1e-9)
+                cout << (long long)round(v->x);
+            else
+                cout << fixed << setprecision(10) << v->x;
+            cout << ",";
+            if (fabs(v->y - round(v->y)) < 1e-9)
+                cout << (long long)round(v->y);
+            else
+                cout << fixed << setprecision(10) << v->y;
+            cout << endl;
+            vid++;
+            v = v->next;
+        } while (v != head);
+    }
+
+    cout << scientific << setprecision(6);
+    cout << "Total signed area in input: " << input_area << endl;
+    cout << "Total signed area in output: " << output_area << endl;
+    cout << "Total areal displacement: " << total_disp << endl;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <input.csv> <target_vertices>" << endl;
+        return 1;
+    }
+
+    readInput(argv[1]);
+    double total_disp = (g_total_verts > stoi(argv[2])) ? runSimplification(stoi(argv[2])) : 0;
+    writeOutput(total_disp);
+
+    for (Vertex* v : g_all_vertices) delete v;
+    return 0;
+}

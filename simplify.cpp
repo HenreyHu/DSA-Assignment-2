@@ -1,5 +1,7 @@
 #include "structures.h"
 
+using namespace std;
+
 // ============================================================
 // Global Variables
 // Contributor: CHU EN HUI VERA 2402441 chu.e@digipen.edu
@@ -97,11 +99,6 @@ bool lineLineIntersect(double x1, double y1, double x2, double y2,
     ix = x1 + t * (x2 - x1);
     iy = y1 + t * (y2 - y1);
     return true;
-}
-
-int main() {
-    std::cout << "HELLO WORLD\n";
-    return 0;
 }
 
 // ============================================================

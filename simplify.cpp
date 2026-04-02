@@ -106,7 +106,20 @@ bool lineLineIntersect(double x1, double y1, double x2, double y2,
 // Contributor: [CHUA JIA LIANG JOEL 2403273 c.jialiang@digipen.edu ]
 // ============================================================
 
-// APSC Placement (Kronenfeld et al. 2020)
+// Check if point P lies strictly on the interior of segment AB
+bool pointOnSegment(double px, double py, double ax, double ay, double bx, double by) {
+    double dx = bx - ax, dy = by - ay;
+    double lenSq = dx * dx + dy * dy;
+    if (lenSq < EPS * EPS) return false;
+
+    double cross_val = dx * (py - ay) - dy * (px - ax);
+    if (cross_val * cross_val > 1e-8 * lenSq) return false;
+
+    double t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+    return t > 1e-6 && t < 1.0 - 1e-6;
+}
+
+// APSC Placement (Kronenfeld et al. 2020, pseudocode from Section 3)
 bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     double& ex, double& ey, double& displacement) {
     double xA = A->x, yA = A->y;
@@ -114,17 +127,22 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     double xC = C->x, yC = C->y;
     double xD = D->x, yD = D->y;
 
-    // Line E: ax + by + c = 0 (parallel to AD)
+    // Line E (eq 1b): ax + by + c = 0 (parallel to AD)
     double a = yD - yA;
     double b = xA - xD;
     double c = -yB * xA + (yA - yC) * xB + (yB - yD) * xC + yC * xD;
 
-    double len_AD = sqrt(a * a + b * b);
-    if (len_AD < EPS) return false;
+    double len_AD_sq = a * a + b * b;
+    if (len_AD_sq < EPS * EPS) return false;
 
-    double side_B = a * xB + b * yB;
-    double side_C = a * xC + b * yC;
+    // Signed distances from line AD (not from origin)
+    // Line AD: a*x + b*y = k where k = a*xA + b*yA
+    double k = a * xA + b * yA;
+    double side_B = a * xB + b * yB - k;
+    double side_C = a * xC + b * yC - k;
+    double side_E = -c - k;  // E_line: a*x + b*y = -c
 
+    // Degenerate: both B and C lie on line AD
     if (fabs(side_B) < EPS && fabs(side_C) < EPS) {
         ex = 0.5 * (xB + xC);
         ey = 0.5 * (yB + yC);
@@ -134,10 +152,23 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
 
     bool use_AB;
     if (side_B * side_C > EPS) {
+        // B and C on same side of AD (paper: configs 4b, 4c)
+        // B further from AD → use AB; C further → use CD
         use_AB = (fabs(side_B) >= fabs(side_C) - EPS);
     }
+    else if (side_B * side_C < -EPS) {
+        // B and C on opposite sides of AD (paper: config 4a)
+        // B on same side as E_line → use AB; otherwise → use CD
+        use_AB = (side_B * side_E >= -EPS);
+    }
     else {
-        use_AB = (side_B * (-c) >= -EPS);
+        // One point is on or very near line AD
+        if (fabs(side_B) < EPS) {
+            use_AB = false;  // B on AD; use CD
+        }
+        else {
+            use_AB = true;   // C on AD; use AB
+        }
     }
 
     if (use_AB) {
@@ -153,7 +184,7 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
         }
     }
 
-    // Compute displacement
+    // Compute areal displacement between paths ABCD and AED
     double ix, iy;
     if (use_AB) {
         if (segmentIntersection(ex, ey, xD, yD, xB, yB, xC, yC, ix, iy)) {
@@ -222,24 +253,28 @@ bool isValidCandidate(const Candidate& c) {
     return true;
 }
 
-// Topology check
+// Topology check: ensures new edges AE and ED don't cross or touch
+// any existing edge, and no existing vertex lies on the new edges.
 bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey) {
     auto makeKey = [](int u1, int u2) -> long long {
         if (u1 > u2) swap(u1, u2);
         return ((long long)u1 << 20) | u2;
         };
 
-    // Edges to exclude from checking
+    // Edges to exclude from checking (the three edges being replaced)
     long long excl1 = makeKey(A->uid, B->uid);
     long long excl2 = makeKey(B->uid, C->uid);
     long long excl3 = makeKey(C->uid, D->uid);
+
+    // Vertices to exclude: A, B, C, D (endpoints of affected edges)
+    int exclV1 = A->uid, exclV2 = B->uid, exclV3 = C->uid, exclV4 = D->uid;
 
     auto checkSeg = [&](double x1, double y1, double x2, double y2) -> bool {
         vector<long long> cells;
         g_grid.cellsForSegment(x1, y1, x2, y2, cells);
 
-        for (long long k : cells) {
-            auto it = g_grid.buckets.find(k);
+        for (long long ck : cells) {
+            auto it = g_grid.buckets.find(ck);
             if (it == g_grid.buckets.end()) continue;
 
             for (auto& edge : it->second) {
@@ -250,7 +285,24 @@ bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey
                 long long key = makeKey(u->uid, v->uid);
                 if (key == excl1 || key == excl2 || key == excl3) continue;
 
+                // Check 1: proper segment crossing
                 if (segmentsCross(x1, y1, x2, y2, u->x, u->y, v->x, v->y))
+                    return false;
+
+                // Check 2: existing vertex lies on the new edge
+                if (u->uid != exclV1 && u->uid != exclV2 &&
+                    u->uid != exclV3 && u->uid != exclV4) {
+                    if (pointOnSegment(u->x, u->y, x1, y1, x2, y2))
+                        return false;
+                }
+                if (v->uid != exclV1 && v->uid != exclV2 &&
+                    v->uid != exclV3 && v->uid != exclV4) {
+                    if (pointOnSegment(v->x, v->y, x1, y1, x2, y2))
+                        return false;
+                }
+
+                // Check 3: new edge endpoint (E) lies on existing edge
+                if (pointOnSegment(ex, ey, u->x, u->y, v->x, v->y))
                     return false;
             }
         }
@@ -437,15 +489,18 @@ void writeOutput(double total_disp) {
         Vertex* v = head;
         do {
             cout << r << "," << vid << ",";
-            if (fabs(v->x - round(v->x)) < 1e-9)
-                cout << (long long)round(v->x);
-            else
-                cout << fixed << setprecision(10) << v->x;
+            // Print coordinate: integer if close to integer, otherwise 10 sig digits
+            auto printCoord = [](double val) {
+                if (fabs(val - round(val)) < 1e-9) {
+                    cout << (long long)round(val);
+                }
+                else {
+                    cout << defaultfloat << setprecision(10) << val;
+                }
+            };
+            printCoord(v->x);
             cout << ",";
-            if (fabs(v->y - round(v->y)) < 1e-9)
-                cout << (long long)round(v->y);
-            else
-                cout << fixed << setprecision(10) << v->y;
+            printCoord(v->y);
             cout << endl;
             vid++;
             v = v->next;

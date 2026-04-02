@@ -28,6 +28,9 @@ Technology is prohibited.
 #include <cmath>
 #include <algorithm>
 #include <iomanip>
+#include <tuple>
+
+using namespace std;
 
 const double EPS = 1e-12;
 
@@ -41,10 +44,11 @@ struct Vertex {
     Vertex* prev;
     Vertex* next;
     bool valid;
-    
+    int version;  // Incremented when neighborhood changes; enables cheap PQ staleness check
+
     Vertex(double x_, double y_, int rid, int id)
         : x(x_), y(y_), ring_id(rid), uid(id),
-          prev(nullptr), next(nullptr), valid(true) {}
+        prev(nullptr), next(nullptr), valid(true), version(0) {}
 };
 
 // ============================================================
@@ -54,7 +58,8 @@ struct Candidate {
     Vertex* B;
     double ex, ey;
     double displacement;
-    
+    int version;  // Snapshot of B->version when this candidate was computed
+
     bool operator>(const Candidate& o) const {
         return displacement > o.displacement;
     }
@@ -97,6 +102,19 @@ struct SpatialGrid {
         cellsForSegment(u->x, u->y, v->x, v->y, cells);
         for (long long k : cells)
             buckets[k].push_back({ u, v });
+    }
+
+    // Purge invalid edges from a single bucket (lazy cleanup).
+    void cleanupBucket(long long key) {
+        auto it = buckets.find(key);
+        if (it == buckets.end()) return;
+        auto& vec = it->second;
+        size_t w = 0;
+        for (size_t r = 0; r < vec.size(); ++r) {
+            if (vec[r].first->valid && vec[r].second->valid)
+                vec[w++] = vec[r];
+        }
+        vec.resize(w);
     }
 };
 

@@ -99,11 +99,6 @@ bool lineLineIntersect(double x1, double y1, double x2, double y2,
     return true;
 }
 
-int main() {
-    std::cout << "HELLO WORLD\n";
-    return 0;
-}
-
 // ============================================================
 // Part 4: APSC Algorithm Core
 // Contributor: [CHUA JIA LIANG JOEL 2403273 c.jialiang@digipen.edu ]
@@ -205,9 +200,13 @@ void pushCandidate(Vertex* B) {
     cand.ex = ex;
     cand.ey = ey;
     cand.displacement = disp;
+    cand.version = B->version;  // Snapshot for fast staleness detection
     g_pq.push(cand);
 }
 
+// Validates whether a candidate's cached placement is still current.
+// Uses version numbers to skip the expensive recomputation when
+// the vertex's neighborhood hasn't changed since the candidate was created.
 bool isValidCandidate(const Candidate& c) {
     if (!c.B->valid) return false;
     if (g_ring_sizes[c.B->ring_id] < 4) return false;
@@ -218,6 +217,11 @@ bool isValidCandidate(const Candidate& c) {
 
     if (!A->valid || !C->valid || !D->valid) return false;
 
+    // Fast path: if version is unchanged, neighbors are the same vertices
+    // in the same positions, so the cached (ex, ey) is still correct.
+    if (c.version == c.B->version) return true;
+
+    // Slow path: neighborhood changed, must recompute placement.
     double ex, ey, disp;
     if (!computePlacement(A, c.B, C, D, ex, ey, disp)) return false;
     if (fabs(ex - c.ex) > EPS || fabs(ey - c.ey) > EPS) return false;
@@ -245,7 +249,15 @@ bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey
             auto it = g_grid.buckets.find(k);
             if (it == g_grid.buckets.end()) continue;
 
-            for (auto& edge : it->second) {
+            auto& bucket = it->second;
+
+            // Lazy cleanup: when a bucket accumulates many stale edges,
+            // purge them to keep future iterations fast.
+            if (bucket.size() > 64) {
+                g_grid.cleanupBucket(k);
+            }
+
+            for (auto& edge : bucket) {
                 Vertex* u = edge.first;
                 Vertex* v = edge.second;
                 if (!u->valid || !v->valid) continue;
@@ -288,6 +300,14 @@ double performCollapse(const Candidate& c) {
 
     g_ring_sizes[ring_id]--;
     g_total_verts--;
+
+    // Bump version for all vertices whose 4-vertex ABCD neighborhood changed.
+    // This allows isValidCandidate to cheaply reject stale PQ entries
+    // without recomputing placement.
+    A->version++;
+    D->version++;
+    if (A->prev->valid) A->prev->version++;
+    if (D->next->valid) D->next->version++;
 
     g_grid.addEdge(A, E);
     g_grid.addEdge(E, D);
@@ -366,6 +386,11 @@ void readInput(const string& filename) {
     g_ring_sizes.resize(num_rings, 0);
     g_orig_rings.resize(num_rings);
 
+    // Pre-allocate vertex storage to reduce heap fragmentation
+    int total_input_verts = 0;
+    for (auto& p : ring_data) total_input_verts += p.second.size();
+    g_all_vertices.reserve(total_input_verts * 2);
+
     double min_x = 1e18, min_y = 1e18, max_x = -1e18, max_y = -1e18;
 
     for (int r = 0; r < num_rings; r++) {
@@ -374,6 +399,7 @@ void readInput(const string& filename) {
         if (n == 0) continue;
 
         vector<Vertex*> ring_verts;
+        ring_verts.reserve(n);
         for (auto& v : verts) {
             double x = get<1>(v), y = get<2>(v);
             ring_verts.push_back(makeVertex(x, y, r));
@@ -398,6 +424,7 @@ void readInput(const string& filename) {
     g_grid.min_x = min_x;
     g_grid.min_y = min_y;
     g_grid.cell_size = range / cells + 1.0;
+    g_grid.buckets.reserve(cells * cells);
 
     for (int r = 0; r < num_rings; r++) {
         Vertex* head = g_ring_heads[r];

@@ -28,9 +28,6 @@ Technology is prohibited.
 #include <cmath>
 #include <algorithm>
 #include <iomanip>
-#include <tuple>
-
-using namespace std;
 
 const double EPS = 1e-12;
 
@@ -44,11 +41,10 @@ struct Vertex {
     Vertex* prev;
     Vertex* next;
     bool valid;
-    int version;  // Incremented when neighborhood changes; enables cheap PQ staleness check
 
     Vertex(double x_, double y_, int rid, int id)
         : x(x_), y(y_), ring_id(rid), uid(id),
-        prev(nullptr), next(nullptr), valid(true), version(0) {}
+        prev(nullptr), next(nullptr), valid(true) {}
 };
 
 // ============================================================
@@ -56,9 +52,9 @@ struct Vertex {
 // ============================================================
 struct Candidate {
     Vertex* B;
+    int uidA, uidB, uidC, uidD; // Ensures exact sequence validation
     double ex, ey;
     double displacement;
-    int version;  // Snapshot of B->version when this candidate was computed
 
     bool operator>(const Candidate& o) const {
         return displacement > o.displacement;
@@ -74,49 +70,40 @@ struct SpatialGrid {
     double min_x, min_y;
     std::unordered_map<long long, std::vector<std::pair<Vertex*, Vertex*>>> buckets;
 
-    long long cellKey(double x, double y) {
-        long long cx = (long long)floor((x - min_x) / cell_size);
-        long long cy = (long long)floor((y - min_y) / cell_size);
-        return (cx << 20) | (cy & 0xFFFFF);
+    // Safely pack 2 signed 32-bit integers into a 64-bit key
+    long long cellKey(long long cx, long long cy) {
+        long long ucx = cx & 0xFFFFFFFF;
+        long long ucy = cy & 0xFFFFFFFF;
+        return (ucx << 32) | ucy;
     }
 
-    void cellsForSegment(double x1, double y1, double x2, double y2, std::vector<long long>& out) {
+    // Strict bounding-box collection guarantees no cells are skipped
+    void cellsForBoundingBox(double minx, double miny, double maxx, double maxy, std::vector<long long>& out) {
         out.clear();
-        out.push_back(cellKey(x1, y1));
-        long long k2 = cellKey(x2, y2);
-        if (k2 != out[0]) out.push_back(k2);
+        long long min_cx = (long long)floor((minx - min_x) / cell_size);
+        long long max_cx = (long long)floor((maxx - min_x) / cell_size);
+        long long min_cy = (long long)floor((miny - min_y) / cell_size);
+        long long max_cy = (long long)floor((maxy - min_y) / cell_size);
 
-        double dx = x2 - x1, dy = y2 - y1;
-        double len = sqrt(dx * dx + dy * dy);
-        int steps = std::max(1, (int)(len / cell_size) + 1);
-        for (int i = 1; i < steps; i++) {
-            double t = (double)i / steps;
-            long long k = cellKey(x1 + t * dx, y1 + t * dy);
-            if (std::find(out.begin(), out.end(), k) == out.end())
-                out.push_back(k);
+        for (long long cx = min_cx; cx <= max_cx; cx++) {
+            for (long long cy = min_cy; cy <= max_cy; cy++) {
+                out.push_back(cellKey(cx, cy));
+            }
         }
     }
 
     void addEdge(Vertex* u, Vertex* v) {
         std::vector<long long> cells;
-        cellsForSegment(u->x, u->y, v->x, v->y, cells);
-        for (long long k : cells)
-            buckets[k].push_back({ u, v });
-    }
+        double minx = std::min(u->x, v->x);
+        double maxx = std::max(u->x, v->x);
+        double miny = std::min(u->y, v->y);
+        double maxy = std::max(u->y, v->y);
+        cellsForBoundingBox(minx, miny, maxx, maxy, cells);
 
-    // Purge invalid edges from a single bucket (lazy cleanup).
-    void cleanupBucket(long long key) {
-        auto it = buckets.find(key);
-        if (it == buckets.end()) return;
-        auto& vec = it->second;
-        size_t w = 0;
-        for (size_t r = 0; r < vec.size(); ++r) {
-            if (vec[r].first->valid && vec[r].second->valid)
-                vec[w++] = vec[r];
+        for (long long k : cells) {
+            buckets[k].push_back({ u, v });
         }
-        vec.resize(w);
     }
 };
-
 
 #endif // STRUCTURES_H

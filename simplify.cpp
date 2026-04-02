@@ -46,7 +46,6 @@ double polySignedArea(const vector<pair<double, double>>& pts) {
     return 0.5 * area;
 }
 
-
 double cross2d(double ax, double ay, double bx, double by) {
     return ax * by - ay * bx;
 }
@@ -106,7 +105,6 @@ bool lineLineIntersect(double x1, double y1, double x2, double y2,
 // Contributor: [CHUA JIA LIANG JOEL 2403273 c.jialiang@digipen.edu ]
 // ============================================================
 
-// Check if point P lies strictly on the interior of segment AB
 bool pointOnSegment(double px, double py, double ax, double ay, double bx, double by) {
     double dx = bx - ax, dy = by - ay;
     double lenSq = dx * dx + dy * dy;
@@ -119,7 +117,6 @@ bool pointOnSegment(double px, double py, double ax, double ay, double bx, doubl
     return t > 1e-6 && t < 1.0 - 1e-6;
 }
 
-// APSC Placement (Kronenfeld et al. 2020, pseudocode from Section 3)
 bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     double& ex, double& ey, double& displacement) {
     double xA = A->x, yA = A->y;
@@ -127,7 +124,6 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     double xC = C->x, yC = C->y;
     double xD = D->x, yD = D->y;
 
-    // Line E (eq 1b): ax + by + c = 0 (parallel to AD)
     double a = yD - yA;
     double b = xA - xD;
     double c = -yB * xA + (yA - yC) * xB + (yB - yD) * xC + yC * xD;
@@ -135,14 +131,11 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     double len_AD_sq = a * a + b * b;
     if (len_AD_sq < EPS * EPS) return false;
 
-    // Signed distances from line AD (not from origin)
-    // Line AD: a*x + b*y = k where k = a*xA + b*yA
     double k = a * xA + b * yA;
     double side_B = a * xB + b * yB - k;
     double side_C = a * xC + b * yC - k;
-    double side_E = -c - k;  // E_line: a*x + b*y = -c
+    double side_E = -c - k;
 
-    // Degenerate: both B and C lie on line AD
     if (fabs(side_B) < EPS && fabs(side_C) < EPS) {
         ex = 0.5 * (xB + xC);
         ey = 0.5 * (yB + yC);
@@ -152,22 +145,17 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
 
     bool use_AB;
     if (side_B * side_C > EPS) {
-        // B and C on same side of AD (paper: configs 4b, 4c)
-        // B further from AD → use AB; C further → use CD
         use_AB = (fabs(side_B) >= fabs(side_C) - EPS);
     }
     else if (side_B * side_C < -EPS) {
-        // B and C on opposite sides of AD (paper: config 4a)
-        // B on same side as E_line → use AB; otherwise → use CD
         use_AB = (side_B * side_E >= -EPS);
     }
     else {
-        // One point is on or very near line AD
         if (fabs(side_B) < EPS) {
-            use_AB = false;  // B on AD; use CD
+            use_AB = false;
         }
         else {
-            use_AB = true;   // C on AD; use AB
+            use_AB = true;
         }
     }
 
@@ -184,7 +172,6 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
         }
     }
 
-    // Compute areal displacement between paths ABCD and AED
     double ix, iy;
     if (use_AB) {
         if (segmentIntersection(ex, ey, xD, yD, xB, yB, xC, yC, ix, iy)) {
@@ -214,7 +201,6 @@ bool computePlacement(Vertex* A, Vertex* B, Vertex* C, Vertex* D,
     return true;
 }
 
-// Candidate management
 void pushCandidate(Vertex* B) {
     if (!B || !B->valid) return;
     if (g_ring_sizes[B->ring_id] < 4) return;
@@ -230,16 +216,16 @@ void pushCandidate(Vertex* B) {
 
     Candidate cand;
     cand.B = B;
+    cand.uidA = A->uid;
+    cand.uidB = B->uid;
+    cand.uidC = C->uid;
+    cand.uidD = D->uid;
     cand.ex = ex;
     cand.ey = ey;
     cand.displacement = disp;
-    cand.version = B->version;  // Snapshot for fast staleness detection
     g_pq.push(cand);
 }
 
-// Validates whether a candidate's cached placement is still current.
-// Uses version numbers to skip the expensive recomputation when
-// the vertex's neighborhood hasn't changed since the candidate was created.
 bool isValidCandidate(const Candidate& c) {
     if (!c.B->valid) return false;
     if (g_ring_sizes[c.B->ring_id] < 4) return false;
@@ -248,53 +234,36 @@ bool isValidCandidate(const Candidate& c) {
     Vertex* C = c.B->next;
     Vertex* D = C->next;
 
+    // Reject if any node in the sequence has been modified since the candidate was generated
     if (!A->valid || !C->valid || !D->valid) return false;
-
-    // Fast path: if version is unchanged, neighbors are the same vertices
-    // in the same positions, so the cached (ex, ey) is still correct.
-    if (c.version == c.B->version) return true;
-
-    // Slow path: neighborhood changed, must recompute placement.
-    double ex, ey, disp;
-    if (!computePlacement(A, c.B, C, D, ex, ey, disp)) return false;
-    if (fabs(ex - c.ex) > EPS || fabs(ey - c.ey) > EPS) return false;
+    if (A->uid != c.uidA || c.B->uid != c.uidB || C->uid != c.uidC || D->uid != c.uidD) return false;
 
     return true;
 }
 
-// Topology check: ensures new edges AE and ED don't cross or touch
-// any existing edge, and no existing vertex lies on the new edges.
 bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey) {
-    auto makeKey = [](int u1, int u2) -> long long {
+    auto makeKey = [](long long u1, long long u2) -> long long {
         if (u1 > u2) swap(u1, u2);
-        return ((long long)u1 << 20) | u2;
+        return (u1 << 32) | u2;
         };
 
-    // Edges to exclude from checking (the three edges being replaced)
     long long excl1 = makeKey(A->uid, B->uid);
     long long excl2 = makeKey(B->uid, C->uid);
     long long excl3 = makeKey(C->uid, D->uid);
 
-    // Vertices to exclude: A, B, C, D (endpoints of affected edges)
     int exclV1 = A->uid, exclV2 = B->uid, exclV3 = C->uid, exclV4 = D->uid;
 
     auto checkSeg = [&](double x1, double y1, double x2, double y2) -> bool {
         vector<long long> cells;
-        g_grid.cellsForSegment(x1, y1, x2, y2, cells);
+        double minx = min(x1, x2), maxx = max(x1, x2);
+        double miny = min(y1, y2), maxy = max(y1, y2);
+        g_grid.cellsForBoundingBox(minx, miny, maxx, maxy, cells);
 
         for (long long ck : cells) {
             auto it = g_grid.buckets.find(ck);
             if (it == g_grid.buckets.end()) continue;
 
-            auto& bucket = it->second;
-
-            // Lazy cleanup: when a bucket accumulates many stale edges,
-            // purge them to keep future iterations fast.
-            if (bucket.size() > 64) {
-                g_grid.cleanupBucket(k);
-            }
-
-            for (auto& edge : bucket) {
+            for (auto& edge : it->second) {
                 Vertex* u = edge.first;
                 Vertex* v = edge.second;
                 if (!u->valid || !v->valid) continue;
@@ -302,11 +271,9 @@ bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey
                 long long key = makeKey(u->uid, v->uid);
                 if (key == excl1 || key == excl2 || key == excl3) continue;
 
-                // Check 1: proper segment crossing
                 if (segmentsCross(x1, y1, x2, y2, u->x, u->y, v->x, v->y))
                     return false;
 
-                // Check 2: existing vertex lies on the new edge
                 if (u->uid != exclV1 && u->uid != exclV2 &&
                     u->uid != exclV3 && u->uid != exclV4) {
                     if (pointOnSegment(u->x, u->y, x1, y1, x2, y2))
@@ -318,7 +285,6 @@ bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey
                         return false;
                 }
 
-                // Check 3: new edge endpoint (E) lies on existing edge
                 if (pointOnSegment(ex, ey, u->x, u->y, v->x, v->y))
                     return false;
             }
@@ -331,7 +297,6 @@ bool topologyOK(Vertex* A, Vertex* B, Vertex* C, Vertex* D, double ex, double ey
     return true;
 }
 
-// Perform collapse
 double performCollapse(const Candidate& c) {
     Vertex* B = c.B;
     Vertex* A = B->prev;
@@ -355,14 +320,6 @@ double performCollapse(const Candidate& c) {
     g_ring_sizes[ring_id]--;
     g_total_verts--;
 
-    // Bump version for all vertices whose 4-vertex ABCD neighborhood changed.
-    // This allows isValidCandidate to cheaply reject stale PQ entries
-    // without recomputing placement.
-    A->version++;
-    D->version++;
-    if (A->prev->valid) A->prev->version++;
-    if (D->next->valid) D->next->version++;
-
     g_grid.addEdge(A, E);
     g_grid.addEdge(E, D);
 
@@ -376,7 +333,6 @@ double performCollapse(const Candidate& c) {
     return c.displacement;
 }
 
-// Main simplification loop
 double runSimplification(int target) {
     double total_disp = 0;
 
@@ -440,11 +396,6 @@ void readInput(const string& filename) {
     g_ring_sizes.resize(num_rings, 0);
     g_orig_rings.resize(num_rings);
 
-    // Pre-allocate vertex storage to reduce heap fragmentation
-    int total_input_verts = 0;
-    for (auto& p : ring_data) total_input_verts += p.second.size();
-    g_all_vertices.reserve(total_input_verts * 2);
-
     double min_x = 1e18, min_y = 1e18, max_x = -1e18, max_y = -1e18;
 
     for (int r = 0; r < num_rings; r++) {
@@ -453,7 +404,6 @@ void readInput(const string& filename) {
         if (n == 0) continue;
 
         vector<Vertex*> ring_verts;
-        ring_verts.reserve(n);
         for (auto& v : verts) {
             double x = get<1>(v), y = get<2>(v);
             ring_verts.push_back(makeVertex(x, y, r));
@@ -472,13 +422,11 @@ void readInput(const string& filename) {
         g_total_verts += n;
     }
 
-    // Init spatial grid
     double range = max(max_x - min_x, max_y - min_y);
     int cells = max(1, (int)sqrt((double)g_total_verts));
     g_grid.min_x = min_x;
     g_grid.min_y = min_y;
     g_grid.cell_size = range / cells + 1.0;
-    g_grid.buckets.reserve(cells * cells);
 
     for (int r = 0; r < num_rings; r++) {
         Vertex* head = g_ring_heads[r];
@@ -490,7 +438,6 @@ void readInput(const string& filename) {
         } while (v != head);
     }
 
-    // Init priority queue
     for (int r = 0; r < num_rings; r++) {
         Vertex* head = g_ring_heads[r];
         if (!head || g_ring_sizes[r] < 4) continue;
@@ -521,7 +468,6 @@ void writeOutput(double total_disp) {
         Vertex* v = head;
         do {
             cout << r << "," << vid << ",";
-            // Print coordinate: integer if close to integer, otherwise 10 sig digits
             auto printCoord = [](double val) {
                 if (fabs(val - round(val)) < 1e-9) {
                     cout << (long long)round(val);
@@ -529,7 +475,7 @@ void writeOutput(double total_disp) {
                 else {
                     cout << defaultfloat << setprecision(10) << val;
                 }
-            };
+                };
             printCoord(v->x);
             cout << ",";
             printCoord(v->y);

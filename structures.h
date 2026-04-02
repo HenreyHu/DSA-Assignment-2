@@ -72,7 +72,7 @@ struct Candidate {
 struct SpatialGrid {
     double cell_size;
     double min_x, min_y;
-    unordered_map<long long, vector<pair<Vertex*, Vertex*>>> buckets;
+    std::unordered_map<long long, std::vector<std::pair<Vertex*, Vertex*>>> buckets;
 
     long long cellKey(double x, double y) {
         long long cx = (long long)floor((x - min_x) / cell_size);
@@ -80,7 +80,7 @@ struct SpatialGrid {
         return (cx << 20) | (cy & 0xFFFFF);
     }
 
-    void cellsForSegment(double x1, double y1, double x2, double y2, vector<long long>& out) {
+    void cellsForSegment(double x1, double y1, double x2, double y2, std::vector<long long>& out) {
         out.clear();
         out.push_back(cellKey(x1, y1));
         long long k2 = cellKey(x2, y2);
@@ -88,17 +88,17 @@ struct SpatialGrid {
 
         double dx = x2 - x1, dy = y2 - y1;
         double len = sqrt(dx * dx + dy * dy);
-        int steps = max(1, (int)(len / cell_size) + 1);
+        int steps = std::max(1, (int)(len / cell_size) + 1);
         for (int i = 1; i < steps; i++) {
             double t = (double)i / steps;
             long long k = cellKey(x1 + t * dx, y1 + t * dy);
-            if (find(out.begin(), out.end(), k) == out.end())
+            if (std::find(out.begin(), out.end(), k) == out.end())
                 out.push_back(k);
         }
     }
 
     void addEdge(Vertex* u, Vertex* v) {
-        vector<long long> cells;
+        std::vector<long long> cells;
         cellsForSegment(u->x, u->y, v->x, v->y, cells);
         for (long long k : cells)
             buckets[k].push_back({ u, v });
